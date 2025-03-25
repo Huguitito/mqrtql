@@ -1,96 +1,84 @@
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', function() {
     const form = document.getElementById('form');
     const resultDiv = document.getElementById('result');
+    const db = firebase.firestore();
     
-    // Generar código corto aleatorio
-    function generateShortCode() {
-        return Math.random().toString(36).substring(2, 8);
+    function showSuccess(shortCode) {
+        const currentUrl = window.location.href;
+        const urlObj = new URL(currentUrl);
+        let basePath = urlObj.pathname;
+        
+        // Ajustar la ruta base
+        if (basePath.endsWith('/')) {
+            basePath = basePath.slice(0, -1);
+        }
+        
+        // Construir URL final
+        const fullShortUrl = `${urlObj.origin}${basePath}?${shortCode}`;
+        
+        resultDiv.innerHTML = `
+            <div class="alert alert-success">
+                <strong>✅ URL acortada:</strong><br>
+                <div class="input-group mt-2">
+                    <input type="text" id="short-url" class="form-control" value="${fullShortUrl}" readonly>
+                    <button class="btn btn-outline-secondary" onclick="copyToClipboard('${fullShortUrl}')">
+                        Copiar
+                    </button>
+                </div>
+                <small class="text-muted d-block mt-2">Este enlace redirigirá a tu URL original</small>
+            </div>
+        `;
     }
 
-    // Manejar el envío del formulario
-    form.addEventListener('submit', async (e) => {
+    function showError(message) {
+        resultDiv.innerHTML = `<div class="alert alert-danger">${message}</div>`;
+    }
+
+    window.copyToClipboard = function(text) {
+        navigator.clipboard.writeText(text).then(() => {
+            const copyBtn = document.querySelector('#result button');
+            copyBtn.textContent = '¡Copiado!';
+            setTimeout(() => {
+                copyBtn.textContent = 'Copiar';
+            }, 2000);
+        });
+    };
+
+    form.addEventListener('submit', async function(e) {
         e.preventDefault();
-        const originalUrl = document.getElementById('url').value;
+        const url = document.getElementById('url').value.trim();
         
-        if (!originalUrl.startsWith('http')) {
-            resultDiv.innerHTML = `<div class="alert alert-danger">Por favor ingresa una URL válida (debe comenzar con http:// o https://)</div>`;
+        if (!url) {
+            showError("Por favor ingresa una URL");
             return;
         }
 
         try {
-            const shortCode = generateShortCode();
-            const { doc, setDoc } = window.firebaseMethods;
-            
-            // Guardar en Firestore
-            await setDoc(doc(window.db, "urls", shortCode), {
-                originalUrl: originalUrl,
-                createdAt: new Date().toISOString()
+            const shortCode = Math.random().toString(36).substring(2, 8);
+            await db.collection("urls").doc(shortCode).set({
+                originalUrl: url,
+                createdAt: firebase.firestore.FieldValue.serverTimestamp()
             });
-
-            // Mostrar resultado
-            const shortUrl = `${window.location.origin}?${shortCode}`;
-            resultDiv.innerHTML = `
-                <div class="alert alert-success">
-                    <strong>✅ URL acortada:</strong><br>
-                    <a href="${shortUrl}" target="_blank">${shortUrl}</a>
-                </div>
-                <button onclick="copyToClipboard('${shortUrl}')" class="btn btn-sm btn-outline-secondary mt-2">
-                    Copiar enlace
-                </button>
-            `;
-            
-            // Limpiar el campo de entrada
+            showSuccess(shortCode);
             document.getElementById('url').value = '';
         } catch (error) {
             console.error("Error:", error);
-            resultDiv.innerHTML = `<div class="alert alert-danger">Ocurrió un error: ${error.message}</div>`;
+            showError("Error al acortar la URL");
         }
     });
 
-    // Función para copiar al portapapeles
-    window.copyToClipboard = (text) => {
-        navigator.clipboard.writeText(text).then(() => {
-            alert("¡Enlace copiado!");
-        });
-    };
-
-    // Manejar redirección al cargar la página
+    // Redirección
     const params = new URLSearchParams(window.location.search);
-    const shortCode = params.get(0) || params.keys().next().value;
-
+    const shortCode = params.keys().next().value;
     if (shortCode) {
-        redirectToOriginalUrl(shortCode);
-    }
-
-    async function redirectToOriginalUrl(code) {
-        try {
-            const { doc, getDoc } = window.firebaseMethods;
-            const docRef = doc(window.db, "urls", code);
-            const docSnap = await getDoc(docRef);
-            
-            if (docSnap.exists()) {
-                window.location.href = docSnap.data().originalUrl;
-            } else {
-                document.body.innerHTML = `
-                    <div class="container mt-5">
-                        <div class="alert alert-danger">
-                            <h4>⚠️ Enlace no encontrado</h4>
-                            <p>El enlace acortado no existe o ha expirado.</p>
-                            <a href="/" class="btn btn-primary">Volver al acortador</a>
-                        </div>
-                    </div>
-                `;
-            }
-        } catch (error) {
-            console.error("Error de redirección:", error);
-            document.body.innerHTML = `
-                <div class="container mt-5">
-                    <div class="alert alert-danger">
-                        <h4>❌ Error del sistema</h4>
-                        <p>No se pudo redirigir: ${error.message}</p>
-                    </div>
-                </div>
-            `;
-        }
+        db.collection("urls").doc(shortCode).get()
+            .then(doc => {
+                if (doc.exists) window.location.href = doc.data().originalUrl;
+                else showError("Enlace no encontrado");
+            })
+            .catch(error => {
+                console.error("Error:", error);
+                showError("Error al cargar el enlace");
+            });
     }
 });
